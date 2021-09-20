@@ -20,7 +20,7 @@ Requires PyTorch: either follow [PyTorch installation instructions](https://pyto
   * Print model summary
 * Based on the wonderful [HuggingFace Transformers](https://github.com/huggingface/transformers) library. Tested on T5-based models. In theory, it should work with other models that support [AutoModelForSeq2SeqLM](https://huggingface.co/transformers/model_doc/auto.html#automodelforseq2seqlm) as well
 
-This work is based on HuggingFace's [run_translation.py](https://github.com/huggingface/transformers/tree/master/examples/pytorch/translation) script for text-to-text generation tasks. It provides (what I feel is) a more convenient interface to training and inferencing text-to-text generation models, along with better access to some features and new features that I added in myself.
+This work is based on HuggingFace's [run_translation.py](https://github.com/huggingface/transformers/tree/master/examples/pytorch/translation) script for text-to-text generation tasks. I decided I want a more more convenient interface for training and inferencing, along with access to things like gradient checkpointing and model parallel that were already in the HuggingFace library but not exposed in the script. I also added in some features that I wanted (prompt tuning, model summary) and wrapped it as a library that can be pip installed. 
 
 ## Examples
 
@@ -56,3 +56,6 @@ python3 -m build
 python3 -m twine upload dist/*
 ```
 
+## Disclaimers
+
+This library as developed as a personal project for my own use. Please feel free to fork or use it for your own purposes as well. I will not take responsibility for any mishaps that occur as a result of this library's usage. 

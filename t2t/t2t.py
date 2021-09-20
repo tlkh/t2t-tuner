@@ -87,13 +87,28 @@ class Trainer:
             self.raw_datasets = load_dataset(
                 extension, data_files=data_files, cache_dir=self.arguments.cache_dir)
 
-    def freeze_params(self):
-        for par in self.model.parameters():
+    def freeze_params(self, module):
+        for par in module.parameters():
             par.requires_grad = False
+            
+    def unfreeze_params(self, module):
+        for par in module.parameters():
+            par.requires_grad = True
 
-    def freeze_model(self):
-        pass
-
+    def freeze(self, encoder=False, decoder=False, embeddings=False):
+        if encoder:
+            freeze_params(self.model.encoder)
+        else:
+            unfreeze_params(self.model.encoder)
+        if decoder:
+            freeze_params(self.model.decoder)
+        else:
+            unfreeze_params(self.model.decoder)
+        if embeddings:
+            freeze_params(self.model.shared)
+        else:
+            unfreeze_params(self.model.shared)
+            
     def round_up(self, x, to=8):
         x, to = int(x), int(to)
         return int((x + to-1) & (-1*to))
@@ -193,6 +208,9 @@ class Trainer:
             print(_string)
 
     def load_model(self):
+        print("Loading", self.arguments.model_name_or_path, "(for large models, this might take a while)")
+        print("Files will be cached at:", self.arguments.cache_dir)
+        print("Ensure this directory is persistent if you do not want to download model files again!")
         self.config = AutoConfig.from_pretrained(
             self.arguments.model_name_or_path,
             cache_dir=self.arguments.cache_dir,
@@ -214,7 +232,7 @@ class Trainer:
         if self.arguments.model_parallel_gpus > 1:
             device_map = {}
             total_num_layers = self.config.num_layers
-            layer_per_gpu = total_num_layers // self.arguments.model_parallel_gpus
+            layer_per_gpu = int(total_num_layers/self.arguments.model_parallel_gpus)
             for i in range(self.arguments.model_parallel_gpus):
                 layers = list(range(i*layer_per_gpu, (i+1)*layer_per_gpu))
                 device_map[i] = layers
