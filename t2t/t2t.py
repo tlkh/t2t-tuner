@@ -198,6 +198,7 @@ class Trainer:
             cache_dir=self.arguments.cache_dir,
             gradient_checkpointing=self.arguments.gradient_checkpointing,
             dropout_rate=self.arguments.dropout_rate,
+            use_cache=not self.arguments.gradient_checkpointing
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.arguments.model_name_or_path,

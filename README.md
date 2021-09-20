@@ -43,6 +43,8 @@ For more concrete examples, check out the notebooks linked below:
 * [Simple example](examples/tldr.ipynb)
 * [Simple example on Colab](https://colab.research.google.com/drive/1_BsldxfPl6lVh2dB9VLOvARRxfswfIzL?usp=sharing)
 * [Soft Prompt Tuning](examples/soft_prompt_tuning.ipynb)
+* [Gradient checkpointing](examples/gradient_checkpointing.ipynb)
+* [Model parallelism](examples/model_parallel.ipynb)
 
 ## Development
 
