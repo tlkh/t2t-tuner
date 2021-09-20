@@ -215,7 +215,9 @@ class Trainer:
             total_num_layers = self.config.num_layers
             layer_per_gpu = total_num_layers // self.arguments.model_parallel_gpus
             for i in range(self.arguments.model_parallel_gpus):
-                device_map[i] = list(range(i*6, (i+1)*6))
+                layers = list(range(i*layer_per_gpu, (i+1)*layer_per_gpu))
+                device_map[i] = layers
+                print("Place layers", layers, "on device", i)
             self.model.parallelize(device_map)
         self.padding = "max_length" if self.arguments.pad_to_max_length else False
 
