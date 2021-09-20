@@ -57,6 +57,20 @@ Data format:
 * Include the prefix in the data file, or define the prefix to prepend to the text in `TrainingArguments.prefix`
 * [Example notebook for data preprocessing from CSV file](sample_data/make_seq2seq_dataset.ipynb)
 
+## Training Large Models
+
+Using this library, you can fine-tune the [T5 11b checkpoints](https://huggingface.co/models?search=11b) quite easily with the following settings:
+
+* Batch size 1 + gradient accumulation to make up to whatever batch size you need
+* Batch size of 8 is possible with gradient checkpointing, but doesn't improve the speed
+* About 128GB of VRAM: 8x 16GB or 4x 32GB GPU (such as V100)
+* FP32 (no need for mixed precision)
+  * FP16 would actually be better, but the pretrained T5 checkpoints don't play well with FP16 as the existing activations are too large ([github issue tracking](https://github.com/huggingface/transformers/pull/10956#issuecomment-813162960))
+
+![Model parallel T5-11b](images/model_parallel.jpg)
+
+Note that depending on your system, the loading time for the checkpoint (46GB) can be quite long.
+
 ## Development
 
 **Building Package**
