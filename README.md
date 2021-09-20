@@ -20,7 +20,7 @@ Requires PyTorch: either follow [PyTorch installation instructions](https://pyto
   * Print model summary
 * Based on the wonderful [HuggingFace Transformers](https://github.com/huggingface/transformers) library. Tested on T5-based models. In theory, it should work with other models that support [AutoModelForSeq2SeqLM](https://huggingface.co/transformers/model_doc/auto.html#automodelforseq2seqlm) as well
 
-This work is based on HuggingFace's [run_translation.py](https://github.com/huggingface/transformers/tree/master/examples/pytorch/translation) script for text-to-text generation tasks. I decided I want a more more convenient interface for training and inferencing, along with access to things like gradient checkpointing and model parallel that were already in the HuggingFace library but not exposed in the script. I also added in some features that I wanted (prompt tuning, model summary) and wrapped it as a library that can be pip installed. 
+This work is based on HuggingFace's [run_translation.py](https://github.com/huggingface/transformers/tree/master/examples/pytorch/translation) script for text-to-text generation tasks. I decided I want a more more convenient interface for training and inferencing, along with access to things like gradient checkpointing and model parallel to fit larger models - these are already in the HuggingFace library but not exposed in the script. I also added in some features that I wanted (prompt tuning, model summary) and wrapped it as a library that can be pip installed. 
 
 ## Examples
 
@@ -45,6 +45,17 @@ For more concrete examples, check out the notebooks linked below:
 * [Soft Prompt Tuning](examples/soft_prompt_tuning.ipynb)
 * [Gradient checkpointing](examples/gradient_checkpointing.ipynb)
 * [Model parallelism](examples/model_parallel.ipynb)
+
+Data format:
+
+```json
+{"translation": {"s": "TEXT", "t": "LABEL"}}
+```
+
+* The format of data is json-lines, following HuggingFace original script. Each example is one line
+* Define the source and target IDs in `TrainingArguments.source_id` and `TrainingArguments.target_id` (defaults to `s` and `t`)
+* Include the prefix in the data file, or define the prefix to prepend to the text in `TrainingArguments.prefix`
+* [Example notebook for data preprocessing from CSV file](sample_data/make_seq2seq_dataset.ipynb)
 
 ## Development
 
