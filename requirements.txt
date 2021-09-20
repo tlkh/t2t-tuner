@@ -1,0 +1,8 @@
+tqdm
+ipywidgets
+datasets
+sentencepiece
+sacrebleu==1.*
+transformers
+pandas
+seaborn
