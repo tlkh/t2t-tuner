@@ -65,7 +65,8 @@ Using this library, you can fine-tune the [T5 11b checkpoints](https://huggingfa
 * Batch size of 8 is possible with gradient checkpointing, but doesn't improve the speed
 * About 128GB of VRAM: 8x 16GB or 4x 32GB GPU (such as V100)
 * FP32 (no need for mixed precision)
-  * FP16 would actually be better, but the pretrained T5 checkpoints don't play well with FP16 as the existing activations are too large ([github issue tracking](https://github.com/huggingface/transformers/pull/10956#issuecomment-813162960))
+  * FP16 would actually be better, but the pretrained T5 checkpoints don't play well with FP16
+  * Likely reason: the existing activations are too large ([github issue tracking](https://github.com/huggingface/transformers/pull/10956#issuecomment-813162960), [some more info](https://discuss.huggingface.co/t/mixed-precision-for-bfloat16-pretrained-models/5315))
 
 ![Model parallel T5-11b](images/model_parallel.jpg)
 
