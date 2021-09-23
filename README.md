@@ -72,6 +72,14 @@ Using this library, you can fine-tune the [T5 11b checkpoints](https://huggingfa
 
 Note that depending on your system, the loading time for the checkpoint (46GB) can be quite long.
 
+## ONNX RT
+
+```shell
+pip install torch-ort -f https://onnxruntimepackages.z14.web.core.windows.net/onnxruntime_stable_torch190.cu111.html
+
+python -m torch_ort.configure
+```
+
 ## Development
 
 **Building Package**

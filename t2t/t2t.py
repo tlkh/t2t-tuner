@@ -1,55 +1,19 @@
 import os
-from dataclasses import dataclass, field
-from typing import Optional
-import torch
+import gc
 import numpy as np
+from . import utils
+import torch
 from datasets import load_dataset, load_metric
 import transformers
 from transformers import (
     AutoConfig,
-    AutoModelForSeq2SeqLM,
     AutoTokenizer,
     DataCollatorForSeq2Seq,
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
     default_data_collator,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
-
-
-@dataclass
-class TrainerArguments(Seq2SeqTrainingArguments):
-    output_dir: str = field(default="./saved_model/")
-    metric: Optional[str] = field(default="sacrebleu")
-    dataset_name: Optional[str] = field(default=None)
-    dataset_config_name: Optional[str] = field(default=None)
-    train_file: Optional[str] = field(default=None)
-    validation_file: Optional[str] = field(default=None)
-    test_file: Optional[str] = field(default=None)
-    cache_dir: Optional[str] = field(default="~/cache/")
-    model_name_or_path: str = field(default="t5-small")
-    pad_to_max_length: Optional[bool] = field(default=False)
-    max_source_length: Optional[int] = field(default=128)
-    max_target_length: Optional[int] = field(default=128)
-    ignore_pad_token_for_loss: Optional[bool] = field(default=True)
-    preprocessing_num_workers: Optional[int] = field(default=1)
-    overwrite_cache: Optional[bool] = field(default=False)
-    fp16: Optional[bool] = field(default=False)
-    pad_to_multiple_of: Optional[int] = field(default=8)
-    predict_with_generate: Optional[bool] = field(default=True)
-    resume_from_checkpoint: Optional[str] = field(default=None)
-    generation_num_beams: Optional[int] = field(default=4)
-    source_id: Optional[str] = field(default="s")
-    target_id: Optional[str] = field(default="t")
-    prefix: Optional[str] = field(default="")
-    gradient_checkpointing: Optional[bool] = field(default=False)
-    dropout_rate: Optional[float] = field(default=0.1)
-    model_parallel_gpus: Optional[int] = field(default=1)
-    logging_strategy: Optional[str] = field(default="epoch")
-    save_strategy: Optional[str] = field(default="epoch")
-    save_total_limit: Optional[int] = field(default=2)
-
+    
 
 class Trainer:
     def __init__(self, arguments):
@@ -59,7 +23,8 @@ class Trainer:
             os.path.isdir(self.arguments.output_dir)
             and not self.arguments.overwrite_output_dir
         ):
-            self.last_checkpoint = get_last_checkpoint(self.arguments.output_dir)
+            self.last_checkpoint = get_last_checkpoint(
+                self.arguments.output_dir)
             if (
                 self.last_checkpoint is None
                 and len(os.listdir(self.arguments.output_dir)) > 0
@@ -69,9 +34,28 @@ class Trainer:
                 )
         set_seed(self.arguments.seed)
         self.metric = load_metric(self.arguments.metric)
-        self.load_dataset()
+        if not self.arguments.mode:
+            self.arguments.mode = self.determine_model_type(
+                self.arguments.model_name_or_path)
+            print("Set TrainingArguments.mode to", self.arguments.mode)
+        # squeeze out more RAM to load larger models
+        gc.collect()
         self.load_model()
         self.is_prompt_tuning_only = False
+        gc.collect()
+        self.load_dataset()
+
+    def determine_model_type(self, model_name):
+        mn = model_name.lower()
+        if "t5" in mn or "bart" in mn or "pegasus" in mn or "opus" in mn:
+            return "seq2seq"
+        elif "gpt" in mn:
+            return "clm"
+        else:
+            print("Unable to determine model type for", model_name)
+            print("Set TrainingArguments.mode as `seq2seq` or `clm` to override")
+            raise NotImplementedError(
+                "Unable to determine model type for training")
 
     def load_dataset(self):
         if self.arguments.dataset_name is not None:
@@ -84,8 +68,11 @@ class Trainer:
         else:
             data_files = {}
             if self.arguments.train_file is not None:
-                data_files["train"] = self.arguments.train_file
                 extension = self.arguments.train_file.split(".")[-1]
+                if extension == "txt":
+                    extension = "text"
+                    self.arguments.keep_linebreaks = True
+                data_files["train"] = self.arguments.train_file
             if self.arguments.validation_file is not None:
                 data_files["valid"] = self.arguments.validation_file
                 extension = self.arguments.validation_file.split(".")[-1]
@@ -95,6 +82,21 @@ class Trainer:
             self.raw_datasets = load_dataset(
                 extension, data_files=data_files, cache_dir=self.arguments.cache_dir
             )
+            if "valid" not in self.raw_datasets.keys() and self.arguments.validation_split > 0:
+                print("Auto-split validation set from training set:",
+                      self.arguments.validation_split, "%")
+                self.raw_datasets["valid"] = load_dataset(
+                    extension,
+                    data_files=data_files,
+                    split=f"train[:{self.arguments.validation_split}%]",
+                    cache_dir=self.arguments.cache_dir,
+                )
+                self.raw_datasets["train"] = load_dataset(
+                    extension,
+                    data_files=data_files,
+                    split=f"train[{self.arguments.validation_split}%:]",
+                    cache_dir=self.arguments.cache_dir,
+                )
 
     def freeze_params(self, module):
         for par in module.parameters():
@@ -118,19 +120,16 @@ class Trainer:
         else:
             self.unfreeze_params(self.model.shared)
 
-    def round_up(self, x, to=8):
-        x, to = int(x), int(to)
-        return int((x + to - 1) & (-1 * to))
-
     def resize_token_embeddings_layer(self, round_up=True):
         vocab_size = len(self.tokenizer)
         if round_up:
-            vocab_size = self.round_up(vocab_size, to=8)
+            vocab_size = utils.round_up(vocab_size, to=8)
         self.model.resize_token_embeddings(vocab_size)
 
     def add_new_tokens(self, additional_special_tokens):
         """List of additional special tokens to add"""
-        special_tokens_dict = {"additional_special_tokens": additional_special_tokens}
+        special_tokens_dict = {
+            "additional_special_tokens": additional_special_tokens}
         self.tokenizer.add_special_tokens(special_tokens_dict)
         self.resize_token_embeddings_layer()
 
@@ -186,14 +185,16 @@ class Trainer:
             self.freeze_embedding_params_partial(
                 self.model.shared, weight_indices=freeze_range
             )
-            self.reinit_new_embeddings(self.model.shared, weight_indices=freeze_range)
+            self.reinit_new_embeddings(
+                self.model.shared, weight_indices=freeze_range)
             self.is_prompt_tuning_only = True
         else:
             raise NotImplementedError("Non-hook method not implemented")
 
     def count_parameters(self, trainable_only=False, return_M=False):
         if trainable_only:
-            params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            params = sum(p.numel()
+                         for p in self.model.parameters() if p.requires_grad)
         else:
             params = sum(p.numel() for p in self.model.parameters())
         if return_M:
@@ -243,26 +244,43 @@ class Trainer:
             cache_dir=self.arguments.cache_dir,
             use_fast=True,
         )
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(
-            self.arguments.model_name_or_path,
-            from_tf=bool(".ckpt" in self.arguments.model_name_or_path),
-            config=self.config,
-            cache_dir=self.arguments.cache_dir,
-        )
+        if self.arguments.mode == "seq2seq":
+            self.model = transformers.AutoModelForSeq2SeqLM.from_pretrained(
+                self.arguments.model_name_or_path,
+                from_tf=bool(".ckpt" in self.arguments.model_name_or_path),
+                config=self.config,
+                cache_dir=self.arguments.cache_dir,
+            )
+        elif self.arguments.mode == "clm":
+            self.model = transformers.AutoModelForCausalLM.from_pretrained(
+                self.arguments.model_name_or_path,
+                from_tf=bool(".ckpt" in self.arguments.model_name_or_path),
+                config=self.config,
+                cache_dir=self.arguments.cache_dir,
+            )
+        else:
+            print("Model name:", self.arguments.model_name_or_path)
+            print("Training mode:", self.arguments.mode)
+            NotImplementedError(
+                "Unable to load this type of model for this training mode")
         if self.arguments.model_parallel_gpus > 1:
             device_map = {}
             total_num_layers = self.config.num_layers
-            layer_per_gpu = int(total_num_layers / self.arguments.model_parallel_gpus)
+            layer_per_gpu = int(total_num_layers /
+                                self.arguments.model_parallel_gpus)
             for i in range(self.arguments.model_parallel_gpus):
-                layers = list(range(i * layer_per_gpu, (i + 1) * layer_per_gpu))
+                layers = list(
+                    range(i * layer_per_gpu, (i + 1) * layer_per_gpu))
                 device_map[i] = layers
                 print("Place layers", layers, "on device", i)
             self.model.parallelize(device_map)
         self.padding = "max_length" if self.arguments.pad_to_max_length else False
 
     def preprocess(self, examples):
-        inputs = [ex[self.arguments.source_id] for ex in examples["translation"]]
-        targets = [ex[self.arguments.target_id] for ex in examples["translation"]]
+        inputs = [ex[self.arguments.source_id]
+                  for ex in examples["translation"]]
+        targets = [ex[self.arguments.target_id]
+                   for ex in examples["translation"]]
         inputs = [self.arguments.prefix + inp for inp in inputs]
         model_inputs = self.tokenizer(
             inputs,
@@ -279,7 +297,8 @@ class Trainer:
             )
         if self.padding == "max_length" and self.arguments.ignore_pad_token_for_loss:
             labels["input_ids"] = [
-                [(l if l != self.tokenizer.pad_token_id else -100) for l in label]
+                [(l if l != self.tokenizer.pad_token_id else -100)
+                 for l in label]
                 for label in labels["input_ids"]
             ]
         model_inputs["labels"] = labels["input_ids"]
@@ -294,11 +313,14 @@ class Trainer:
         preds, labels = eval_preds
         if isinstance(preds, tuple):
             preds = preds[0]
-        decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
+        decoded_preds = self.tokenizer.batch_decode(
+            preds, skip_special_tokens=True)
         if self.arguments.ignore_pad_token_for_loss:
             # Replace -100 in the labels as we can't decode them.
-            labels = np.where(labels != -100, labels, self.tokenizer.pad_token_id)
-        decoded_labels = self.tokenizer.batch_decode(labels, skip_special_tokens=True)
+            labels = np.where(labels != -100, labels,
+                              self.tokenizer.pad_token_id)
+        decoded_labels = self.tokenizer.batch_decode(
+            labels, skip_special_tokens=True)
         # Some simple post-processing
         decoded_preds, decoded_labels = self.postprocess_text(
             decoded_preds, decoded_labels
@@ -343,7 +365,8 @@ class Trainer:
             diversity_penalty=0.5,
             early_stopping=True,
         )
-        tgt_text = self.tokenizer.batch_decode(translated, skip_special_tokens=True)
+        tgt_text = self.tokenizer.batch_decode(
+            translated, skip_special_tokens=True)
         output_texts = [t.strip() for t in tgt_text]
         output_texts = list(set(output_texts))
         output_texts.sort()
@@ -360,10 +383,122 @@ class Trainer:
         translated = self.model.generate(
             **model_inputs, max_length=int(max_length), early_stopping=True
         )
-        tgt_text = self.tokenizer.batch_decode(translated, skip_special_tokens=True)
+        tgt_text = self.tokenizer.batch_decode(
+            translated, skip_special_tokens=True)
         return tgt_text[0].strip()
 
-    def train(self, valid, tensorboard=False):
+    def train(self, valid=False, batch_size=None, max_source_length=None, max_target_length=None, tensorboard=False, dev_mode=False, mode=None):
+        gc.collect()
+        if mode == None:
+            mode = self.arguments.mode
+        if mode == "seq2seq":
+            self.train_seq2seq(valid=valid, batch_size=batch_size, max_source_length=max_source_length,
+                               max_target_length=max_source_length, tensorboard=tensorboard, dev_mode=dev_mode)
+        elif mode == "clm":
+            self.train_clm(valid=valid, batch_size=batch_size, max_source_length=max_source_length,
+                           max_target_length=max_source_length, tensorboard=tensorboard, dev_mode=dev_mode)
+        else:
+            raise NotImplementedError("Training mode not implemented")
+
+    def train_clm(self, valid=False, batch_size=None, max_source_length=None, max_target_length=None, tensorboard=False, dev_mode=False):
+        column_names = self.raw_datasets["train"].column_names
+        text_column_name = "text" if "text" in column_names else column_names[0]
+
+        def tokenize_function(examples):
+            output = self.tokenizer(examples[text_column_name])
+            print("^ Please ignore if there is warning above")
+            print("Long input will later be chunked into smaller bits")
+            return output
+        with self.arguments.main_process_first(desc="dataset map tokenization"):
+            tokenized_datasets = self.raw_datasets.map(
+                tokenize_function,
+                batched=True,
+                num_proc=self.arguments.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not self.arguments.overwrite_cache,
+                desc="Running tokenizer on dataset",
+            )
+        if self.arguments.block_size is None:
+            block_size = self.tokenizer.model_max_length
+        elif self.arguments.block_size > self.tokenizer.model_max_length:
+            print("block_size > tokenizer.model_max_length, reduce to",
+                  self.tokenizer.model_max_length)
+            block_size = self.tokenizer.model_max_length
+        else:
+            block_size = int(self.arguments.block_size)
+
+        def group_texts(examples):
+            concatenated_examples = {
+                k: sum(examples[k], []) for k in examples.keys()}
+            total_length = len(concatenated_examples[list(examples.keys())[0]])
+            if total_length >= block_size:
+                total_length = (total_length // block_size) * block_size
+            result = {
+                k: [t[i: i + block_size]
+                    for i in range(0, total_length, block_size)]
+                for k, t in concatenated_examples.items()
+            }
+            result["labels"] = result["input_ids"].copy()
+            return result
+        with self.arguments.main_process_first(desc="grouping texts together"):
+            lm_datasets = tokenized_datasets.map(
+                group_texts,
+                batched=True,
+                num_proc=self.arguments.preprocessing_num_workers,
+                load_from_cache_file=not self.arguments.overwrite_cache,
+                desc=f"Grouping texts in chunks of {block_size}",
+            )
+        train_dataset = lm_datasets["train"]
+        if valid:
+            eval_dataset = lm_datasets["valid"]
+
+        if not valid:
+            # override validation
+            self.arguments.validation_file = None
+            self.arguments.evaluation_strategy = None
+
+        if batch_size:
+            print("Override batch_size to", batch_size)
+            self.arguments.per_device_train_batch_size = int(batch_size)
+            self.arguments.per_device_eval_batch_size = int(batch_size)
+
+        if dev_mode:
+            print("Dev mode, setting max_steps to 10")
+            self.arguments.max_steps = 10
+
+        self.trainer = transformers.Trainer(
+            model=self.model,
+            args=self.arguments,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset if valid else None,
+            tokenizer=self.tokenizer,
+            data_collator=default_data_collator,
+        )
+        if not tensorboard:
+            self.trainer.remove_callback(
+                transformers.integrations.TensorBoardCallback)
+
+        # Training
+        checkpoint = None
+        if self.arguments.resume_from_checkpoint is not None:
+            checkpoint = self.arguments.resume_from_checkpoint
+        elif self.last_checkpoint is not None:
+            checkpoint = self.last_checkpoint
+
+        torch.cuda.empty_cache()
+        train_result = self.trainer.train(resume_from_checkpoint=checkpoint)
+        torch.cuda.empty_cache()
+
+        self.trainer.save_model()
+        metrics = train_result.metrics
+        metrics["train_samples"] = len(train_dataset)
+        self.trainer.log_metrics("train", metrics)
+        self.trainer.save_metrics("train", metrics)
+        self.trainer.save_state()
+
+        return train_result
+
+    def train_seq2seq(self, valid=False, batch_size=None, max_source_length=None, max_target_length=None, tensorboard=False, dev_mode=False):
         column_names = self.raw_datasets["train"].column_names
         train_dataset = self.raw_datasets["train"]
         with self.arguments.main_process_first(desc="train dataset map pre-processing"):
@@ -406,11 +541,29 @@ class Trainer:
             )
 
         if not valid:
+            # override validation
             self.arguments.validation_file = None
             self.arguments.evaluation_strategy = None
 
+        if batch_size:
+            print("Override batch_size to", batch_size)
+            self.arguments.per_device_train_batch_size = int(batch_size)
+            self.arguments.per_device_eval_batch_size = int(batch_size)
+
+        if max_source_length:
+            print("Override max_source_length to", max_source_length)
+            self.arguments.max_source_length = int(max_source_length)
+
+        if max_target_length:
+            print("Override max_target_length to", max_target_length)
+            self.arguments.max_target_length = int(max_target_length)
+
+        if dev_mode:
+            print("Dev mode, setting max_steps to 10")
+            self.arguments.max_steps = 10
+
         # Initialize our Trainer
-        self.trainer = Seq2SeqTrainer(
+        self.trainer = transformers.Seq2SeqTrainer(
             model=self.model,
             args=self.arguments,
             train_dataset=train_dataset,
@@ -420,9 +573,11 @@ class Trainer:
             compute_metrics=self.compute_metrics
             if self.arguments.predict_with_generate
             else None,
+            callbacks=[utils.L2FetchCallback]
         )
         if not tensorboard:
-            self.trainer.remove_callback(transformers.integrations.TensorBoardCallback)
+            self.trainer.remove_callback(
+                transformers.integrations.TensorBoardCallback)
 
         # Training
         checkpoint = None
@@ -442,7 +597,7 @@ class Trainer:
         self.trainer.save_metrics("train", metrics)
         self.trainer.save_state()
 
-    def valid(self):
+    def valid_seq2seq(self):
         max_length = self.arguments.max_target_length
         num_beams = self.arguments.generation_num_beams
 
