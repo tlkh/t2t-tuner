@@ -121,17 +121,8 @@ class Trainer:
     def unfreeze_params(self, module):
         for par in module.parameters():
             par.requires_grad = True
-
-    def freeze(self, encoder=None, decoder=None, embeddings=None):
-        if encoder:
-            self.freeze_params(self.model.encoder)
-        elif encoder==False:
-            self.unfreeze_params(self.model.encoder)
-        if decoder:
-            self.freeze_params(self.model.decoder)
-        elif decoder==False:
-            self.unfreeze_params(self.model.decoder)
-        # embeddings:
+            
+    def get_embedding_layers(self):
         embedding_layers = []
         try:
             embedding_layers.append(self.model.shared)
@@ -142,7 +133,18 @@ class Trainer:
             embedding_layers.append(self.model.transformer.wpe)
         except Exception as e:
             print(e, "(probably not a GPT-Neo model)")
-        for el in embedding_layers:
+        return embedding_layers
+
+    def freeze(self, encoder=None, decoder=None, embeddings=None):
+        if encoder:
+            self.freeze_params(self.model.encoder)
+        elif encoder==False:
+            self.unfreeze_params(self.model.encoder)
+        if decoder:
+            self.freeze_params(self.model.decoder)
+        elif decoder==False:
+            self.unfreeze_params(self.model.decoder)
+        for el in self.get_embedding_layers():
             if embeddings:
                 self.freeze_params(el)
             elif embeddings==False:
@@ -291,6 +293,7 @@ class Trainer:
             print("Training mode:", self.arguments.mode)
             NotImplementedError(
                 "Unable to load this type of model for this training mode")
+            
         if self.arguments.model_parallel_gpus > 1:
             print("Model parallel on", self.arguments.model_parallel_gpus, "GPU:")
             device_map = {}
@@ -303,6 +306,16 @@ class Trainer:
                 device_map[i] = layers
                 print("* place layers", layers, "on GPU", i)
             self.model.parallelize(device_map)
+            if self.arguments.embedding_on_cpu:
+                for el in self.get_embedding_layers():
+                    el = el.to("cpu")
+        elif self.arguments.embedding_on_cpu:
+            print("Moving embedding layer to CPU, others to GPU 0")
+            device_map = {0: list(range(self.config.num_layers))}
+            self.model.parallelize(device_map)
+            for el in self.get_embedding_layers():
+                el = el.to("cpu")
+            self.model_parallel = True
         self.padding = "max_length" if self.arguments.pad_to_max_length else False
 
     def preprocess(self, examples):

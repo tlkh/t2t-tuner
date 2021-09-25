@@ -17,6 +17,7 @@ Requires PyTorch: either follow [PyTorch installation instructions](https://pyto
   * Model parallelism
   * Soft prompt tuning ([based on this paper](https://arxiv.org/abs/2104.08691))
   * Freeze encoder/decoder/embeddings
+  * Move embeddings to CPU
   * Print model summary
   * [DeepSpeed](https://github.com/microsoft/DeepSpeed)
 
@@ -76,6 +77,7 @@ Some notes for the configurations reported below:
 * FreezeEmbeds: Freeze (do not train) embedding layer to reduce VRAM usage and computation (set `trainer.freeze(embeddings=True)`).
 * Adafactor uses less VRAM than Adam, but is slightly slower and can converge slightly differently.
 * You can use gradient accumulation (`TrainingArguments.gradient_accumulation_steps`) to make up to a larger batch size if needed. The batch sizes reported are **without** gradient accumulation.
+* Moving embeddings to CPU seems to have almost no impact on both VRAM usage and performance, therefore is not used.
 
 ### GPT Models
 
@@ -84,7 +86,7 @@ Some GPT configurations that were tested to able to train on a single RTX 3090 (
 | Model | Params | Precision | Optimizer | InputLen | BatchSize | Other |
 | ----- | ------ | --------- | --------- | --------- | --------- | ----- |
 | [gpt2](https://huggingface.co/gpt2-xl) | 1.5b | FP16 | Adafactor | 128 | 4 | None |
-| [gpt2](https://huggingface.co/gpt2-xl) | 1.5b | FP16 | Adafactor | 496 | 1 | None |
+| [gpt2](https://huggingface.co/gpt2-xl) | 1.5b | FP16 | Adafactor | 512 | 1 | None |
 | [gpt2](https://huggingface.co/gpt2-xl) | 1.5b | FP16 | Adafactor | 1024 | 4 | GradCheckpoint |
 | [gpt-neo](https://huggingface.co/EleutherAI/gpt-neo-1.3B) | 1.3b | FP16 | Adafactor | 1024 | 1 | None |
 | [gpt-neo](https://huggingface.co/EleutherAI/gpt-neo-1.3B) | 1.3b | FP16 | Adafactor | 2048 | 4 | GradCheckpoint |
@@ -100,6 +102,8 @@ Some T5 configurations that were tested to able to train on a single RTX 3090 (2
 | [t5](https://huggingface.co/t5-3b) | 3b | FP32 | Adafactor | 128->128 | 1 | GradCheckpoint |
 | [t5](https://huggingface.co/t5-3b) | 3b | FP32 | Adafactor | 128->128 | 128 | GradCheckpoint,FreezeEmbeds |
 | [t5](https://huggingface.co/t5-3b) | 3b | FP32 | Adafactor | 512->512 | 32 | GradCheckpoint,FreezeEmbeds |
+
+**Model Parallelism for T5-11b models**
 
 Using this library, you also can fine-tune the [t5-11b checkpoints](https://huggingface.co/models?search=11b) quite easily (single node) with the following settings (without Deepspeed):
 
