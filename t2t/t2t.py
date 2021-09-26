@@ -89,9 +89,15 @@ class Trainer:
                 data_files["valid"] = self.arguments.validation_file
             if self.arguments.test_file is not None:
                 data_files["test"] = self.arguments.test_file
-            self.raw_datasets = load_dataset(
-                extension, data_files=data_files, cache_dir=self.arguments.cache_dir
-            )
+            if extension == "text":
+                print("keep_linebreaks", self.arguments.keep_linebreaks)
+                self.raw_datasets = load_dataset(
+                    extension, data_files=data_files, cache_dir=self.arguments.cache_dir, keep_linebreaks=self.arguments.keep_linebreaks
+                )
+            else:
+                self.raw_datasets = load_dataset(
+                    extension, data_files=data_files, cache_dir=self.arguments.cache_dir
+                )
             if "valid" not in self.raw_datasets.keys() and self.arguments.validation_split > 0:
                 print("Auto-split validation set from training set:",
                       self.arguments.validation_split, "%")
