@@ -110,8 +110,9 @@ class Trainer:
                 split_datasets = full_dataset.train_test_split(test_size=self.arguments.validation_split)
                 self.raw_datasets["valid"] = split_datasets["test"]
                 self.raw_datasets["train"] = split_datasets["train"]
-            distributed = torch.distributed.is_initialized()
-            print("Distributed training:", distributed)
+            #distributed = torch.distributed.is_initialized()
+            #print("Distributed training:", distributed)
+            """
             if distributed:
                 n_proc = torch.distributed.get_world_size()
                 rank = torch.distributed.get_rank()
@@ -121,7 +122,7 @@ class Trainer:
                                                                                   index=rank)
                 if "valid" in self.raw_datasets.keys():
                     self.raw_datasets["valid"] = self.raw_datasets["valid"].shard(num_shards=n_proc,
-                                                                                  index=rank)
+                                                                                  index=rank)"""
             
     def GradCheckpoint(self):
         self.arguments.gradient_checkpointing = True
