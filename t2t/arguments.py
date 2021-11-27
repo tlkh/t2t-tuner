@@ -13,7 +13,7 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     block_size: Optional[int] = field(default=None)
     train_file: Optional[str] = field(default=None)
     validation_file: Optional[str] = field(default=None)
-    validation_split: Optional[int] = field(default=0)
+    validation_split: Optional[float] = field(default=0)
     test_file: Optional[str] = field(default=None)
     cache_dir: Optional[str] = field(default="~/cache/")
     model_name_or_path: str = field(default="t5-small")
@@ -41,4 +41,6 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     optimizer: Optional[torch.optim.Optimizer] = field(default=None)
     torch_ort: Optional[bool] = field(default=False)
     embedding_on_cpu: Optional[bool] = field(default=False)
+    deepspeed: Optional[str] = field(default=None)
+    dataset_cache: Optional[bool] = field(default=True)
         

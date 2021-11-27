@@ -100,20 +100,29 @@ class Trainer:
                 )
             if "valid" not in self.raw_datasets.keys() and self.arguments.validation_split > 0:
                 print("Auto-split validation set from training set:",
-                      self.arguments.validation_split, "%")
-                self.raw_datasets["valid"] = load_dataset(
+                      self.arguments.validation_split*100, "%")
+                full_dataset = load_dataset(
                     extension,
                     data_files=data_files,
-                    split=f"train[:{self.arguments.validation_split}%]",
+                    split="train",
                     cache_dir=self.arguments.cache_dir,
                 )
-                self.raw_datasets["train"] = load_dataset(
-                    extension,
-                    data_files=data_files,
-                    split=f"train[{self.arguments.validation_split}%:]",
-                    cache_dir=self.arguments.cache_dir,
-                )
-                
+                split_datasets = full_dataset.train_test_split(test_size=self.arguments.validation_split)
+                self.raw_datasets["valid"] = split_datasets["test"]
+                self.raw_datasets["train"] = split_datasets["train"]
+            distributed = torch.distributed.is_initialized()
+            print("Distributed training:", distributed)
+            if distributed:
+                n_proc = torch.distributed.get_world_size()
+                rank = torch.distributed.get_rank()
+                print("Shard", rank+1, "of total", n_proc)
+                if "train" in self.raw_datasets.keys():
+                    self.raw_datasets["train"] = self.raw_datasets["train"].shard(num_shards=n_proc,
+                                                                                  index=rank)
+                if "valid" in self.raw_datasets.keys():
+                    self.raw_datasets["valid"] = self.raw_datasets["valid"].shard(num_shards=n_proc,
+                                                                                  index=rank)
+            
     def GradCheckpoint(self):
         self.arguments.gradient_checkpointing = True
         
@@ -453,15 +462,15 @@ class Trainer:
         def tokenize_function(examples):
             output = self.tokenizer(examples[text_column_name])
             return output
-        with self.arguments.main_process_first(desc="dataset map tokenization"):
-            tokenized_datasets = self.raw_datasets.map(
-                tokenize_function,
-                batched=True,
-                num_proc=self.arguments.preprocessing_num_workers,
-                remove_columns=column_names,
-                load_from_cache_file=not self.arguments.overwrite_cache,
-                desc="Running tokenizer on dataset",
-            )
+        #with self.arguments.main_process_first(desc="dataset map tokenization"):
+        tokenized_datasets = self.raw_datasets.map(
+            tokenize_function,
+            batched=True,
+            num_proc=self.arguments.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=self.arguments.dataset_cache,
+            desc="Running tokenizer on dataset",
+        )
         if self.arguments.block_size is None:
             block_size = self.tokenizer.model_max_length
         elif self.arguments.block_size > self.tokenizer.model_max_length:
@@ -484,14 +493,14 @@ class Trainer:
             }
             result["labels"] = result["input_ids"].copy()
             return result
-        with self.arguments.main_process_first(desc="grouping texts together"):
-            lm_datasets = tokenized_datasets.map(
-                group_texts,
-                batched=True,
-                num_proc=self.arguments.preprocessing_num_workers,
-                load_from_cache_file=not self.arguments.overwrite_cache,
-                desc=f"Grouping texts in chunks of {block_size}",
-            )
+        #with self.arguments.main_process_first(desc="grouping texts together"):
+        lm_datasets = tokenized_datasets.map(
+            group_texts,
+            batched=True,
+            num_proc=self.arguments.preprocessing_num_workers,
+            load_from_cache_file=self.arguments.dataset_cache,
+            desc=f"Grouping texts in chunks of {block_size}",
+        )
         train_dataset = lm_datasets["train"]
         if valid:
             eval_dataset = lm_datasets["valid"]
@@ -545,28 +554,28 @@ class Trainer:
     def train_seq2seq(self, valid=False, batch_size=None, max_source_length=None, max_target_length=None, tensorboard=False, dev_mode=False):
         column_names = self.raw_datasets["train"].column_names
         train_dataset = self.raw_datasets["train"]
-        with self.arguments.main_process_first(desc="train dataset map pre-processing"):
-            train_dataset = train_dataset.map(
+        #with self.arguments.main_process_first(desc="train dataset map pre-processing"):
+        train_dataset = train_dataset.map(
+            self.preprocess,
+            batched=True,
+            num_proc=self.arguments.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=self.arguments.dataset_cache,
+            desc="Running tokenizer on train dataset",
+        )
+        if valid:
+            eval_dataset = self.raw_datasets["valid"]
+            #with self.arguments.main_process_first(
+            #    desc="validation dataset map pre-processing"
+            #):
+            eval_dataset = eval_dataset.map(
                 self.preprocess,
                 batched=True,
                 num_proc=self.arguments.preprocessing_num_workers,
                 remove_columns=column_names,
-                load_from_cache_file=not self.arguments.overwrite_cache,
-                desc="Running tokenizer on train dataset",
+                load_from_cache_file=self.arguments.dataset_cache,
+                desc="Running tokenizer on validation dataset",
             )
-        if valid:
-            eval_dataset = self.raw_datasets["valid"]
-            with self.arguments.main_process_first(
-                desc="validation dataset map pre-processing"
-            ):
-                eval_dataset = eval_dataset.map(
-                    self.preprocess,
-                    batched=True,
-                    num_proc=self.arguments.preprocessing_num_workers,
-                    remove_columns=column_names,
-                    load_from_cache_file=not self.arguments.overwrite_cache,
-                    desc="Running tokenizer on validation dataset",
-                )
 
         # Data collator
         label_pad_token_id = (
@@ -648,17 +657,17 @@ class Trainer:
 
         eval_dataset = self.raw_datasets["valid"]
         column_names = self.raw_datasets["valid"].column_names
-        with self.arguments.main_process_first(
-            desc="validation dataset map pre-processing"
-        ):
-            eval_dataset = eval_dataset.map(
-                self.preprocess,
-                batched=True,
-                num_proc=self.arguments.preprocessing_num_workers,
-                remove_columns=column_names,
-                load_from_cache_file=not self.arguments.overwrite_cache,
-                desc="Running tokenizer on validation dataset",
-            )
+        #with self.arguments.main_process_first(
+        #    desc="validation dataset map pre-processing"
+        #):
+        eval_dataset = eval_dataset.map(
+            self.preprocess,
+            batched=True,
+            num_proc=self.arguments.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=self.arguments.dataset_cache,
+            desc="Running tokenizer on validation dataset",
+        )
 
         torch.cuda.empty_cache()
         metrics = self.trainer.evaluate(
