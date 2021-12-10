@@ -24,6 +24,8 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     preprocessing_num_workers: Optional[int] = field(default=1)
     overwrite_cache: Optional[bool] = field(default=False)
     fp16: Optional[bool] = field(default=False)
+    bf16: Optional[bool] = field(default=False)
+    tf32: Optional[bool] = field(default=True)
     pad_to_multiple_of: Optional[int] = field(default=8)
     predict_with_generate: Optional[bool] = field(default=True)
     resume_from_checkpoint: Optional[str] = field(default=None)
